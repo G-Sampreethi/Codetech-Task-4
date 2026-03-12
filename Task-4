@@ -1,0 +1,124 @@
+TASK 4 - RECOMMENDATION SYSTEM
+Book Recommendation (Collaborative Filtering)
+# ==============================
+
+import pandas as pd
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.metrics import mean_squared_error
+from math import sqrt
+
+# ------------------------------
+# 1. LOAD DATA
+# ------------------------------
+
+books = pd.read_csv("BX_Books.csv", sep=";", encoding="latin-1", on_bad_lines='skip')
+ratings = pd.read_csv("BX-Book-Ratings.csv", sep=";", encoding="latin-1", on_bad_lines='skip')
+
+# Rename columns
+books.columns = ['ISBN','Book-Title','Book-Author','Year',
+                 'Publisher','Image-URL-S','Image-URL-M','Image-URL-L']
+
+ratings.columns = ['User-ID','ISBN','Book-Rating']
+
+print("Original Ratings Shape:", ratings.shape)
+
+# ------------------------------
+# 2. DATA CLEANING
+# ------------------------------
+
+# Keep only explicit ratings (>0)
+ratings = ratings[ratings['Book-Rating'] > 0]
+
+# Merge books and ratings
+df = ratings.merge(books[['ISBN','Book-Title']], on='ISBN')
+
+print("After Merge Shape:", df.shape)
+
+# ------------------------------
+# 3. FILTER DATA (IMPORTANT - MEMORY SAFE)
+# ------------------------------
+
+# Keep popular books (at least 50 ratings)
+book_counts = df['Book-Title'].value_counts()
+popular_books = book_counts[book_counts >= 50].index
+df = df[df['Book-Title'].isin(popular_books)]
+
+# Keep active users (at least 50 ratings)
+user_counts = df['User-ID'].value_counts()
+active_users = user_counts[user_counts >= 50].index
+df = df[df['User-ID'].isin(active_users)]
+
+print("Filtered Dataset Shape:", df.shape)
+
+# ------------------------------
+# 4. CREATE USER-ITEM MATRIX
+# ------------------------------
+
+user_item_matrix = df.pivot_table(
+    index='User-ID',
+    columns='Book-Title',
+    values='Book-Rating'
+).fillna(0)
+
+print("Matrix Shape:", user_item_matrix.shape)
+
+# ------------------------------
+# 5. COMPUTE USER SIMILARITY
+# ------------------------------
+
+user_similarity = cosine_similarity(user_item_matrix)
+
+user_similarity_df = pd.DataFrame(
+    user_similarity,
+    index=user_item_matrix.index,
+    columns=user_item_matrix.index
+)
+
+print("Similarity Matrix Created Successfully ✅")
+
+# ------------------------------
+# 6. RECOMMENDATION FUNCTION
+# ------------------------------
+
+def recommend_books(user_id, num_recommendations=5):
+
+    # Get similar users
+    similar_users = user_similarity_df[user_id].sort_values(ascending=False)[1:6]
+
+    weighted_ratings = pd.Series(dtype=float)
+
+    for similar_user, similarity_score in similar_users.items():
+        weighted_ratings = weighted_ratings.add(
+            user_item_matrix.loc[similar_user] * similarity_score,
+            fill_value=0
+        )
+
+    recommendations = weighted_ratings.sort_values(ascending=False)
+
+    # Remove books already rated
+    already_rated = user_item_matrix.loc[user_id]
+    recommendations = recommendations[already_rated == 0]
+
+    return recommendations.head(num_recommendations)
+
+# ------------------------------
+# 7. TEST RECOMMENDATION
+# ------------------------------
+
+sample_user = user_item_matrix.index[0]
+print("\nRecommendations for User:", sample_user)
+print(recommend_books(sample_user))
+
+# ------------------------------
+# 8. EVALUATION (RMSE)
+# ------------------------------
+
+predicted_ratings = user_similarity.dot(user_item_matrix)
+
+rmse = sqrt(mean_squared_error(
+    user_item_matrix.values.flatten(),
+    predicted_ratings.flatten()
+))
+
+print("\nRMSE:", rmse)
